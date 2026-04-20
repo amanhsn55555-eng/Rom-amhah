@@ -1368,6 +1368,14 @@
       border-right: 3px solid #8b5cf6;
     }
 
+  .back-btn { 
+    display: none !important; 
+    visibility: hidden !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
     .permissions-title {
       font-weight: 700;
       margin-bottom: 10px;
@@ -4359,35 +4367,85 @@ async function sendGiftNotification(targetUid, gift, senderName, senderAvatar, s
   // فتح أول غرفة مباشرة بدون رجوع
   
   
-  (function autoOpenFirstRoom() {
-    const checkAndOpen = setInterval(() => {
-      if (typeof rooms !== 'undefined' && rooms.length > 0) {
-        clearInterval(checkAndOpen);
-        const firstRoom = rooms[0];
-        if (firstRoom) {
-          // منع الرجوع للخلف
-          history.pushState(null, null, location.href);
-          window.addEventListener('popstate', function() {
-            history.pushState(null, null, location.href);
-          });
-          
-          // إخفاء واجهة الغرف
-          document.querySelector('.rooms-header').style.display = 'none';
-          document.querySelector('.search-section').style.display = 'none';
-          document.querySelector('.rooms-container').style.display = 'none';
-          
-          // فتح الغرفة
-          if (typeof openChatRoom === 'function') {
-            openChatRoom(firstRoom.id);
-          }
-        }
-      }
-    }, 100);
-    
-    // إيقاف المحاولة بعد 10 ثواني
-    setTimeout(() => clearInterval(checkAndOpen), 10000);
-  })();
+  // متغير لمنع الفتح المتكرر
+let hasAutoOpened = false;
+let autoOpenUnsubscribe = null;
 
+// دالة فتح أقدم غرفة تلقائياً
+function setupAutoOpenFirstRoom() {
+  if (autoOpenUnsubscribe) autoOpenUnsubscribe();
+  
+  // البحث عن أقدم غرفة (ترتيب تصاعدي = الأقدم أولاً)
+  const roomsQuery = query(collection(db, "rooms"), orderBy("createdAt", "asc"));
+  
+  autoOpenUnsubscribe = onSnapshot(roomsQuery, (snapshot) => {
+    // إذا تم الفتح مسبقاً، تجاهل
+    if (hasAutoOpened) return;
+    
+    // إذا لا توجد غرف، لا تفعل شيئاً وانتظر
+    if (snapshot.empty) return;
+    
+    // تأكد من وجود مستخدم مسجل الدخول
+    if (!currentUser) return;
+    
+    // خذ أقدم غرفة (أول وثيقة في النتيجة)
+    const oldestRoom = snapshot.docs[0];
+    const roomId = oldestRoom.id;
+    
+    // تفعيل منع التكرار
+    hasAutoOpened = true;
+    
+    // منع الرجوع للخلف
+    history.pushState(null, null, location.href);
+    window.addEventListener('popstate', function() {
+      history.pushState(null, null, location.href);
+    });
+    
+    // إخفاء واجهة الغرف
+    document.querySelector('.rooms-header').style.display = 'none';
+    document.querySelector('.search-section').style.display = 'none';
+    document.querySelector('.rooms-container').style.display = 'none';
+    
+    // فتح الغرفة
+    console.log('🚪 فتح أقدم غرفة:', roomId);
+    joinRoom(roomId);
+    
+    // إلغاء الاستماع بعد الفتح
+    if (autoOpenUnsubscribe) {
+      autoOpenUnsubscribe();
+      autoOpenUnsubscribe = null;
+    }
+  }, (error) => {
+    console.error("❌ خطأ في تحميل الغرف:", error);
+  });
+}
+
+// استدعاء الدالة بعد تسجيل الدخول
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    await loadUserData(user.uid);
+    await loadGlobalAnnouncement();
+    
+    listenForAnnouncements();
+    subscribeToRooms();
+    
+    // بدء محاولة فتح أقدم غرفة
+    if (!hasAutoOpened) {
+      setupAutoOpenFirstRoom();
+    }
+  } else {
+    const container = document.getElementById('roomsContainer');
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <i class="fas fa-sign-in-alt"></i>
+          <p>يرجى تسجيل الدخول للوصول إلى الغرف</p>
+        </div>
+      `;
+    }
+  }
+});
   
   </script>
 </body>
